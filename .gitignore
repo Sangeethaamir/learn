@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Test output
+test-results/
+playwright-report/
+allure-results/
+allure-report/
+reports/
+
+# Auth state — NEVER commit auth files (contains session tokens)
+.auth/
+
+# Environment files — contains secrets
+.env
+.env.local
+.env.*.local
+
+# TypeScript compiled output
+dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Visual snapshots (optional — some teams commit these)
+# tests/visual/**/*.png

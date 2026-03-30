@@ -1,0 +1,164 @@
+# ============================================================
+# azure-pipelines.yml — Azure DevOps Pipeline Configuration
+# ============================================================
+# PHASE 7 — Topic 32: Running Playwright in Azure DevOps
+# ============================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    exclude:
+      - README.md
+      - docs/**
+
+pr:
+  branches:
+    include:
+      - main
+
+# ─── VARIABLE GROUPS: Store secrets in Azure Key Vault ───
+variables:
+  - group: playwright-secrets       # Variable group in Azure DevOps Library
+  - name: NODE_VERSION
+    value: '20'
+  - name: PLAYWRIGHT_BROWSERS_PATH
+    value: $(Pipeline.Workspace)/.cache/ms-playwright
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+
+  # ── STAGE 1: Build & Install ──
+  - stage: Install
+    displayName: 'Install Dependencies'
+    jobs:
+      - job: InstallDeps
+        displayName: 'Install Node & Playwright'
+        steps:
+          - task: NodeTool@0
+            displayName: 'Install Node.js'
+            inputs:
+              versionSpec: $(NODE_VERSION)
+
+          - task: Cache@2
+            displayName: 'Cache node_modules'
+            inputs:
+              key: 'npm | "$(Agent.OS)" | package-lock.json'
+              restoreKeys: 'npm | "$(Agent.OS)"'
+              path: node_modules
+
+          - script: npm ci
+            displayName: 'npm clean install'
+
+          - task: Cache@2
+            displayName: 'Cache Playwright browsers'
+            inputs:
+              key: 'playwright | "$(Agent.OS)" | package-lock.json'
+              restoreKeys: 'playwright | "$(Agent.OS)"'
+              path: $(PLAYWRIGHT_BROWSERS_PATH)
+
+          - script: npx playwright install --with-deps chromium
+            displayName: 'Install Playwright Chromium'
+
+  # ── STAGE 2: Run Tests ──
+  - stage: Test
+    displayName: 'Run Playwright Tests'
+    dependsOn: Install
+    jobs:
+
+      # Smoke Tests — fast feedback
+      - job: SmokeTests
+        displayName: 'Smoke Tests'
+        steps:
+          - script: npm ci
+            displayName: 'Install dependencies'
+
+          - script: npx playwright install --with-deps chromium
+            displayName: 'Install browsers'
+
+          - script: |
+              npx playwright test --grep @smoke \
+                --reporter=junit,html,line
+            displayName: 'Run Smoke Tests'
+            env:
+              BASE_URL: $(BASE_URL)
+              TEST_USER_EMAIL: $(TEST_USER_EMAIL)
+              TEST_USER_PASSWORD: $(TEST_USER_PASSWORD)
+              CI: 'true'
+
+          # Publish JUnit results to Azure DevOps Test Results
+          - task: PublishTestResults@2
+            displayName: 'Publish Test Results'
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'reports/junit-results.xml'
+              testRunTitle: 'Playwright Smoke Tests'
+              mergeTestResults: true
+              failTaskOnFailedTests: true
+
+          # Publish HTML report as pipeline artifact
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish HTML Report'
+            condition: always()
+            inputs:
+              targetPath: playwright-report
+              artifact: 'playwright-smoke-report'
+              publishLocation: pipeline
+
+      # Regression Tests — full suite
+      - job: RegressionTests
+        displayName: 'Regression Tests'
+        dependsOn: SmokeTests
+        condition: succeeded()
+        steps:
+          - script: npm ci && npx playwright install --with-deps chromium
+            displayName: 'Setup'
+
+          - script: |
+              npx playwright test --grep @regression \
+                --reporter=junit,html \
+                --workers=4
+            displayName: 'Run Regression Tests'
+            env:
+              BASE_URL: $(BASE_URL)
+              TEST_USER_EMAIL: $(TEST_USER_EMAIL)
+              TEST_USER_PASSWORD: $(TEST_USER_PASSWORD)
+              CI: 'true'
+
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'reports/junit-results.xml'
+              testRunTitle: 'Playwright Regression Tests'
+
+          - task: PublishPipelineArtifact@1
+            condition: always()
+            inputs:
+              targetPath: playwright-report
+              artifact: 'playwright-regression-report'
+
+  # ── STAGE 3: Report & Notify ──
+  - stage: Report
+    displayName: 'Report & Notify'
+    dependsOn: Test
+    condition: always()
+    jobs:
+      - job: NotifyTeams
+        displayName: 'Send Teams Notification'
+        steps:
+          - task: IncomingWebhook@1
+            displayName: 'Notify Microsoft Teams'
+            inputs:
+              webhookUri: $(TEAMS_WEBHOOK_URL)
+              message: |
+                Playwright Test Run Complete
+                Pipeline: $(Build.DefinitionName)
+                Branch: $(Build.SourceBranch)
+                Status: $(Agent.JobStatus)
+              messageType: 'text'

@@ -1,0 +1,58 @@
+# ============================================================
+# docker-compose.yml — Docker Compose Configuration
+# ============================================================
+# Makes it easy to run tests in Docker locally or in CI.
+#
+# Usage:
+#   docker-compose up --build                 # Run all tests
+#   docker-compose run playwright-smoke       # Run smoke only
+#   docker-compose run playwright-regression  # Run regression
+#
+# PHASE 7 — Topic 33: Docker setup for Playwright
+# ============================================================
+
+version: '3.8'
+
+services:
+
+  # ── DEFAULT: Run all tests ──
+  playwright:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: playwright-tests
+    volumes:
+      # Mount test results BACK to host machine for viewing reports
+      - ./playwright-report:/app/playwright-report
+      - ./test-results:/app/test-results
+      - ./reports:/app/reports
+    environment:
+      - BASE_URL=${BASE_URL:-https://demowebshop.tricentis.com}
+      - TEST_USER_EMAIL=${TEST_USER_EMAIL}
+      - TEST_USER_PASSWORD=${TEST_USER_PASSWORD}
+      - CI=true
+    command: npx playwright test --reporter=html,junit,line
+
+  # ── SMOKE TESTS ONLY ──
+  playwright-smoke:
+    extends: playwright
+    container_name: playwright-smoke
+    command: npx playwright test --grep @smoke --reporter=html,line
+
+  # ── REGRESSION TESTS ──
+  playwright-regression:
+    extends: playwright
+    container_name: playwright-regression
+    command: npx playwright test --grep @regression --workers=4
+
+  # ── API TESTS ONLY ──
+  playwright-api:
+    extends: playwright
+    container_name: playwright-api
+    command: npx playwright test tests/api --reporter=line
+
+  # ── ACCESSIBILITY TESTS ──
+  playwright-a11y:
+    extends: playwright
+    container_name: playwright-a11y
+    command: npx playwright test tests/accessibility --reporter=line
